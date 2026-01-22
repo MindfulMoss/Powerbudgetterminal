@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Battery SOC Simulation Multi-Day</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 20px; font-size: 11px; }
+    th, td { border: 1px solid #ccc; padding: 6px; text-align: center; }
+    th { background-color: #f0f0f0; }
+    h2 { margin-top: 40px; }
+    input { width: 80px; margin-right: 10px; }
+</style>
+</head>
+<body>
+
+<h1>Brunei Terminal - Battery State of Charge (SOC) Simulation Multi-Day</h1>
+
+<!-- Parameters -->
+<div>
+    <label>Days: <input id="days" type="number" value="1"></label>
+    <label>Load (Wh/day): <input id="load" type="number" value="50"></label>
+    <label>Panel Rated Power (W): <input id="panel" type="number" value="20"></label>
+    <label>Derating: <input id="derating" type="number" step="0.01" value="0.81"></label>
+    <button onclick="simulate()">Simulate</button>
+</div>
+
+<!-- Charts -->
+<canvas id="socChart" width="1200" height="400"></canvas>
+<canvas id="solarChart" width="1200" height="400" style="margin-top:40px;"></canvas>
+
+<!-- Tables -->
+<h2>Full-Day Battery SOC Table: 08–17 Active Hours</h2>
+<table id="table_08_17">
+    <thead>
+        <tr>
+            <th>Day-Hour</th>
+            <th>Irradiance (Wh/m²)</th>
+            <th>SOC (Wh)</th>
+            <th>Load (Wh)</th>
+            <th>Charge (Wh)</th>
+            <th>Charging</th>
+        </tr>
+    </thead>
+    <tbody></tbody>
+</table>
+
+<h2>Full-Day Battery SOC Table: 10–14 Active Hours</h2>
+<table id="table_10_14">
+    <thead>
+        <tr>
+            <th>Day-Hour</th>
+            <th>Irradiance (Wh/m²)</th>
+            <th>SOC (Wh)</th>
+            <th>Load (Wh)</th>
+            <th>Charge (Wh)</th>
+            <th>Charging</th>
+        </tr>
+    </thead>
+    <tbody></tbody>
+</table>
+
+<script>
+// ==================================================
+// Simulation Data
+// ==================================================
+const irradiance_full = [0,0,0,0,0,0,17,173,296,405,481,547,546,526,439,362,242,122,0,0,0,0,0,0];
+const batteryVoltage = 11.1;
+const batteryCapacity = 5.0;
+const DOD = 0.8;
+const batteryUsable = batteryVoltage * batteryCapacity * DOD;
+
+// ==================================================
+// SOC Simulation Function
+// ==================================================
+function simulateSOC(activeHours, panelEffective, loadHourly, DAYS) {
+    let soc = batteryUsable;
+    const tableData = [];
+    const chartData = [];
+    const solarPowerData = [];
+
+    for (let day = 1; day <= DAYS; day++) {
+        for (let hour = 0; hour < 24; hour++) {
+            let charge = 0;
+            if (activeHours.includes(hour)) {
+                charge = panelEffective * (irradiance_full[hour]/1000);
+            }
+            soc += charge - loadHourly;
+            if (soc > batteryUsable) soc = batteryUsable;
+
+            const charging = (charge > loadHourly) ? "Yes" : "No";
+
+            tableData.push({
+                time: `Day ${day} ${hour.toString().padStart(2,'0')}-${(hour+1).toString().padStart(2,'0')}`,
+                irradiance: irradiance_full[hour],
+                load: loadHourly.toFixed(2),
+                charge: charge.toFixed(2),
+                soc: soc.toFixed(2),
+                charging: charging
+            });
+
+            chartData.push(soc.toFixed(2));
+            solarPowerData.push(charge.toFixed(2));
+        }
+    }
+
+    return { tableData, chartData, solarPowerData };
+}
+
+// ==================================================
+// Main Simulation
+// ==================================================
+function simulate() {
+    const DAYS = parseInt(document.getElementById("days").value);
+    const loadDaily = parseFloat(document.getElementById("load").value);
+    const panelRated = parseFloat(document.getElementById("panel").value);
+    const derating = parseFloat(document.getElementById("derating").value);
+
+    const panelEffective = panelRated * derating;
+    const loadHourly = loadDaily / 24;
+
+    // Active hours
+    const hours_08_17 = Array.from({length: 10}, (_, i) => i+8);   // 08-17
+    const hours_10_14 = Array.from({length: 4}, (_, i) => i+10);   // 10-14
+
+    const result08_17 = simulateSOC(hours_08_17, panelEffective, loadHourly, DAYS);
+    const result10_14 = simulateSOC(hours_10_14, panelEffective, loadHourly, DAYS);
+
+    // ==================================================
+    // Fill Tables
+    // ==================================================
+    const tbody08_17 = document.querySelector("#table_08_17 tbody");
+    tbody08_17.innerHTML = "";
+    result08_17.tableData.forEach(row => {
+        tbody08_17.innerHTML += `<tr>
+            <td>${row.time}</td>
+            <td>${row.irradiance}</td>
+            <td>${row.soc}</td>
+            <td>${row.load}</td>
+            <td>${row.charge}</td>
+            <td>${row.charging}</td>
+        </tr>`;
+    });
+
+    const tbody10_14 = document.querySelector("#table_10_14 tbody");
+    tbody10_14.innerHTML = "";
+    result10_14.tableData.forEach(row => {
+        tbody10_14.innerHTML += `<tr>
+            <td>${row.time}</td>
+            <td>${row.irradiance}</td>
+            <td>${row.soc}</td>
+            <td>${row.load}</td>
+            <td>${row.charge}</td>
+            <td>${row.charging}</td>
+        </tr>`;
+    });
+
+    // ==================================================
+    // SOC Chart
+    // ==================================================
+    const ctx = document.getElementById("socChart").getContext("2d");
+    if (window.socChartInstance) window.socChartInstance.destroy();
+    window.socChartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: Array.from({length:DAYS*24}, (_,i)=>i.toString()),
+            datasets: [
+                {
+                    label: 'SOC 08–17 (Wh)',
+                    data: result08_17.chartData,
+                    borderColor: 'green',
+                    fill: false,
+                    tension: 0.1
+                },
+                {
+                    label: 'SOC 10–14 (Wh)',
+                    data: result10_14.chartData,
+                    borderColor: 'orange',
+                    fill: false,
+                    tension: 0.1
+                }
+            ]
+        },
+        options: {
+            scales: {
+                x: { title: { display: true, text: 'Hour' } },
+                y: { title: { display: true, text: 'SOC (Wh)' } }
+            }
+        }
+    });
+
+    // ==================================================
+    // Solar Power Chart
+    // ==================================================
+    const ctx2 = document.getElementById("solarChart").getContext("2d");
+    if (window.solarChartInstance) window.solarChartInstance.destroy();
+    window.solarChartInstance = new Chart(ctx2, {
+        type: 'line',
+        data: {
+            labels: Array.from({length:DAYS*24}, (_,i)=>i.toString()),
+            datasets: [
+                {
+                    label: 'Solar Power 08–17 (W)',
+                    data: result08_17.solarPowerData,
+                    borderColor: 'blue',
+                    fill: false,
+                    tension: 0.1
+                },
+                {
+                    label: 'Solar Power 10–14 (W)',
+                    data: result10_14.solarPowerData,
+                    borderColor: 'red',
+                    fill: false,
+                    tension: 0.1
+                }
+            ]
+        },
+        options: {
+            scales: {
+                x: { title: { display: true, text: 'Hour' } },
+                y: { title: { display: true, text: 'Power (W)' } }
+            }
+        }
+    });
+}
+
+// Run initial simulation
+simulate();
+</script>
+
+</body>
+</html>
